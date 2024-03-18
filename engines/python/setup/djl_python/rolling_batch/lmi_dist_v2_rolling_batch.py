@@ -13,37 +13,38 @@
 import logging
 from collections import OrderedDict
 
-from vllm import EngineArgs, LLMEngine, SamplingParams
-from vllm.utils import random_uuid
+from lmi_dist.api import Request
+from lmi_dist.init_engine import engine_from_args
+from vllm import EngineArgs, SamplingParams
+
 from djl_python.rolling_batch.rolling_batch import RollingBatch, stop_on_any_exception, Token
 from djl_python.rolling_batch.rolling_batch_vllm_utils import (
     get_speculative_decoding_metrics_record, update_request_cache_with_output,
     supports_speculative_decoding, DTYPE_MAPPER, FINISH_REASON_MAPPER)
-from djl_python.properties_manager.vllm_rb_properties import VllmRbProperties
+from djl_python.properties_manager.lmi_dist_v2_rb_properties import LmiDistV2RbProperties
 
 
-class VLLMRollingBatch(RollingBatch):
+class LmiDistRollingBatch(RollingBatch):
     """
-    VLLMRollingBatch connects the handler to the backend (VLLM inference). It receives new
-    requests from the handler and sends them to the backend when there is space available in the batch.
+    LmiDistRollingBatch connects handler to LmiDist backend engine. It receives new
+    requests from the handler and sends them to the backend when space is available in the batch.
     It also gets any new tokens from the backend and sends them back to the handler.
     """
 
-    # TODO: Make properties is the only parameter, after refactoring all rolling batch handlers
-    def __init__(self, model_id_or_path: str, properties: dict,
-                 **kwargs) -> None:
+    def __init__(self, model_id_or_path: str, properties: dict, **kwargs):
         """
-        Initializes the VLLMRollingBatch.
+        Initializes the LmiDistRollingBatch.
 
-        :param model_id_or_path: Currently unused since there is a copy inside properties
-        :param properties: other properties of the model, such as decoder strategy
+        :param model_id_or_path (str): Currently unused since there is a copy inside properties
+        :param properties (dict): other properties of the model, such as decoder strategy
         """
-        self.vllm_configs = VllmRbProperties(**properties)
-        super().__init__(waiting_steps=self.vllm_configs.waiting_steps,
-                         output_formatter=self.vllm_configs.output_formatter)
+        self.lmi_dist_config = LmiDistV2RbProperties(**properties)
+        super().__init__(
+            waiting_steps=self.lmi_dist_config.waiting_steps,
+            output_formatter=self.lmi_dist_config.output_formatter)
         self.supports_speculative_decoding = supports_speculative_decoding()
         engine_kwargs = {}
-        if supports_speculative_decoding():
+        if self.supports_speculative_decoding:
             engine_kwargs[
                 "draft_model"] = self.vllm_configs.speculative_draft_model
             engine_kwargs[
@@ -51,54 +52,55 @@ class VLLMRollingBatch(RollingBatch):
             engine_kwargs[
                 "draft_model_tp_size"] = self.vllm_configs.draft_model_tp_size
         args = EngineArgs(
-            model=self.vllm_configs.model_id_or_path,
-            tensor_parallel_size=self.vllm_configs.tensor_parallel_degree,
-            dtype=DTYPE_MAPPER[self.vllm_configs.dtype],
+            model=self.lmi_dist_config.model_id_or_path,
+            tensor_parallel_size=self.lmi_dist_config.tensor_parallel_degree,
+            dtype=DTYPE_MAPPER[self.lmi_dist_config.dtype],
             seed=0,
-            max_model_len=self.vllm_configs.max_model_len,
-            enforce_eager=self.vllm_configs.enforce_eager,
-            gpu_memory_utilization=self.vllm_configs.gpu_memory_utilization,
-            max_num_batched_tokens=self.vllm_configs.
+            max_model_len=self.lmi_dist_config.max_model_len,
+            enforce_eager=self.lmi_dist_config.enforce_eager,
+            gpu_memory_utilization=self.lmi_dist_config.gpu_memory_utilization,
+            max_num_batched_tokens=self.lmi_dist_config.
             max_rolling_batch_prefill_tokens,
-            trust_remote_code=self.vllm_configs.trust_remote_code,
-            load_format=self.vllm_configs.load_format,
-            quantization=self.vllm_configs.quantize,
-            revision=self.vllm_configs.revision,
+            trust_remote_code=self.lmi_dist_config.trust_remote_code,
+            load_format=self.lmi_dist_config.load_format,
+            quantization=self.lmi_dist_config.quantize,
+            revision=self.lmi_dist_config.revision,
             **engine_kwargs)
-        self.engine = LLMEngine.from_engine_args(args)
+        self.engine = engine_from_args(args)
         self.request_cache = OrderedDict()
+        self.model_type = getattr(kwargs.get("model_config", None),
+                                  "model_type", None)
 
     def reset(self) -> None:
         """
         Aborts all requests
         """
-        for key in self.request_cache.keys():
-            self.engine.abort_request(key)
+        self.engine.reset(self.request_cache.keys())
         self.request_cache = OrderedDict()
         super().reset()
 
-    def translate_vllm_params(self, parameters: dict) -> dict:
+    def translate_lmi_dist_params(self, parameters: dict):
         """
         Helper function to convert DJL Serving parameter names to parameter names
-        that VLLM recognizes.
+        that lmidist_v2 recognizes.
 
-        :param parameters: Parameters pertaining to a specific request
+        :param parameters (dict): Parameters pertaining to a specific request
 
-        :return: The same parameters dict, but with VLLM style parameter names.
+        :return: The same parameters dict, but with lmi-dist style parameter names.
         """
-        parameters["max_tokens"] = parameters.pop("max_new_tokens", 30)
+        do_sample = parameters.pop('do_sample', False)
+        if do_sample and "temperature" not in parameters.keys():
+            parameters["temperature"] = 1.0
+        else:
+            parameters["temperature"] = 0.0
         if "seed" in parameters.keys():
             parameters["seed"] = int(parameters["seed"])
-        if not parameters.pop('do_sample', False):
-            # if temperature is zero, vLLM does greedy sampling
-            parameters['temperature'] = 0
+        if "max_new_tokens" in parameters.keys():
+            parameters["max_tokens"] = parameters.pop("max_new_tokens")
         if "stop_sequences" in parameters.keys():
             parameters["stop"] = parameters.pop("stop_sequences")
         if "ignore_eos_token" in parameters.keys():
             parameters["ignore_eos"] = parameters.pop("ignore_eos")
-        if "num_beams" in parameters.keys():
-            parameters["best_of"] = parameters.pop("num_beams")
-            parameters["use_beam_search"] = True
         return parameters
 
     @stop_on_any_exception
@@ -116,11 +118,13 @@ class VLLMRollingBatch(RollingBatch):
                                              batch_size)
         # step 0: register new requests to engine
         for request in new_requests:
-            request_id = random_uuid()
-            params = self.translate_vllm_params(request.parameters)
+            request_id = str(request.id)
+            params = self.translate_lmi_dist_params(request.parameters)
             sampling_params = SamplingParams(**params)
-            self.engine.add_request(request_id, request.input_text,
-                                    sampling_params)
+            lmi_dist_request = Request(id=request_id,
+                                       prompt=request.input_text,
+                                       sampling_params=sampling_params)
+            self.engine.add_request(lmi_dist_request)
             self.request_cache[request_id] = {
                 "curr_length": 0,
                 "text": "",
@@ -137,7 +141,7 @@ class VLLMRollingBatch(RollingBatch):
                 self.request_cache, request_output)
             # Record SD metrics
             completion_output = request_output.outputs[0]
-            if self.vllm_configs.record_acceptance_rate and request_output.finished:
+            if self.lmi_dist_config.record_acceptance_rate and request_output.finished:
                 if self.supports_speculative_decoding and completion_output.acceptance_history:
                     record = get_speculative_decoding_metrics_record(
                         completion_output, request_output)
@@ -175,6 +179,7 @@ class VLLMRollingBatch(RollingBatch):
 
     def preprocess_requests(self, requests):
         """
-        Currently not applicable for VLLM.
+        Currently not applicable for lmi-dist-v2.
         """
-        raise NotImplementedError("Not implemented for vLLM rolling batcher")
+        raise NotImplementedError(
+            "Not implemented for lmidist_v2 rolling batcher")

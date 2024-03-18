@@ -119,10 +119,9 @@ model = sagemaker.Model(
     role=iam_role,
     # specify all environment variable configs in this map
     env={
-        "SERVING_LOAD_MODELS": "test::Python=/opt/ml/model",
-        "OPTION_MODEL_ID": "<huggingface hub model id or s3 uri>",
+        "HF_MODEL_ID": "<huggingface hub model id or s3 uri>",
         "OPTION_ROLLING_BATCH": "vllm",
-        "OPTION_TENSOR_PARALLEL_DEGREE": "max",
+        "TENSOR_PARALLEL_DEGREE": "max",
     }
 )
 # deploy your model
@@ -146,6 +145,9 @@ outputs = predictor.predict({
     "parameters": {"do_sample": True, "max_new_tokens": 256}
 })
 ```
+
+Depending on which backend you are deploying with, you will have access to different generation parameters.
+To learn more about the API schema (Request/Response structure), please see [this document](../user_guides/lmi_input_output_schema.md).
 
 Next: [Benchmark your endpoint](benchmarking-your-endpoint.md)
 

@@ -22,7 +22,7 @@ Configurations specified in the `serving.properties` files will override configu
 
 Both configuration mechanisms offer access to the same set of configurations.
 
-If you know which backend you are going to use, you can find a set of starter configurations in the corresponding [user guide](../user_guides).
+If you know which backend you are going to use, you can find a set of starter configurations in the corresponding [user guide](../user_guides/README.md).
 We recommend using the quick start configurations as a starting point if you have decided on a particular backend.
 The only change required to the starter configurations is specifying `option.model_id` to point to your model artifacts.
 
@@ -95,7 +95,7 @@ There are two classes of configurations provided by LMI:
 * Engine/Backend level configurations. These configurations have a `option.` prefix (e.g. `option.model_id`)
 
 Since LMI is built using the DJLServing model server, all DJLServing configurations are available in LMI.
-You can find a list of these configurations [here](https://docs.djl.ai/docs/serving/serving/docs/configurations_model.html#python-model-configuration).
+You can find a list of these configurations [here](../../configurations_model.md#python-model-configuration).
 
 The following list of configurations is intended to highlight the relevant configurations for LMI: 
 
@@ -119,7 +119,7 @@ The following list of configurations is intended to highlight the relevant confi
 ## Backend Specific Configurations
 
 Each backend provides access to additional configurations.
-You can find these configurations in the respective [user guides](../user_guides).
+You can find these configurations in the respective [user guides](../user_guides/README.md).
 
 ## Environment Variable Configurations
 
@@ -147,27 +147,22 @@ For a full example, given the following `serving.properties` file:
 ```
 engine=MPI
 option.model_id=tiiuae/falcon-40b
-option.task=text-generation
 option.entryPoint=djl_python.transformersneuronx
 option.trust_remote_code=true
 option.tensor_parallel_degree=4
 option.max_rolling_batch_size=32
-option.rolling_batch=lmi-dist
-option.dtype=fp16
+option.rolling_batch=auto
 ```
 
 We can translate the configuration to environment variables like this:
 
 ```
-SERVING_LOAD_MODELS=test::MPI=/opt/ml/model
-OPTION_MODEL_ID=tiiuae/falcon-40b
-OPTION_TASK=text-generation
+HF_MODEL_ID=tiiuae/falcon-40b
 OPTION_ENTRYPOINT=djl_python.transformersneuronx
-OPTION_TRUST_REMOTE_CODE=true
-OPTION_TENSOR_PARALLEL_DEGREE=4
+HF_TRUST_REMOTE_CODE=true
+TENSOR_PARALLEL_DEGREE=4
 OPTION_MAX_ROLLING_BATCH_SIZE=32
-OPTION_ROLLING_BATCH=lmi-dist
-OPTION_DTYPE=FP16
+OPTION_ROLLING_BATCH=auto
 ```
 
 Next: [Deploying your endpoint](deploying-your-endpoint.md)

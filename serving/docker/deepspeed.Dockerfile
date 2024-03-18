@@ -65,6 +65,7 @@ ENV SAFETENSORS_FAST_GPU=1
 ENV NCCL_BLOCKING_WAIT=0
 ENV NCCL_ASYNC_ERROR_HANDLING=1
 ENV TORCH_NCCL_AVOID_RECORD_STREAMS=1
+ENV SERVING_FEATURES=vllm,lmi-dist
 
 ENTRYPOINT ["/usr/local/bin/dockerd-entrypoint.sh"]
 CMD ["serve"]
@@ -121,3 +122,5 @@ LABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port="true"
 LABEL djl-version=$djl_version
 LABEL deepspeed-version=$deepspeed_version
 LABEL cuda-version=$cuda_version
+# To use the 535 CUDA driver, CUDA 12.1 can work on this one too
+LABEL com.amazonaws.sagemaker.inference.cuda.verified_versions=12.2

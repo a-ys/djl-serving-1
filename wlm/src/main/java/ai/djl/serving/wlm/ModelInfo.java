@@ -13,7 +13,6 @@
 package ai.djl.serving.wlm;
 
 import ai.djl.Device;
-import ai.djl.MalformedModelException;
 import ai.djl.Model;
 import ai.djl.ModelException;
 import ai.djl.engine.Engine;
@@ -40,8 +39,6 @@ import ai.djl.translate.TranslateException;
 import ai.djl.util.NeuronUtils;
 import ai.djl.util.Utils;
 import ai.djl.util.cuda.CudaUtils;
-
-import com.google.gson.JsonParseException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -193,18 +190,6 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
         adapters = new ConcurrentHashMap<>();
         eventManager = EventManager.getInstance();
         dimension = new Dimension("Model", id);
-    }
-
-    /**
-     * Performs post workflow parsing initialization.
-     *
-     * @param workflowDir the workflow parent directory
-     */
-    public void postWorkflowParsing(String workflowDir) {
-        if (modelUrl == null) {
-            throw new JsonParseException("modelUrl is required in workflow definition.");
-        }
-        modelUrl = modelUrl.replaceAll("\\{model_dir}", workflowDir);
     }
 
     /**
@@ -682,7 +667,9 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
             }
         }
 
-        if (isPythonModel(prefix)) {
+        if (isTorchServeModel()) {
+            return "Python";
+        } else if (isPythonModel(prefix)) {
             return LmiUtils.inferLmiEngine(this);
         } else if (Files.isRegularFile(modelDir.resolve(prefix + ".pt"))
                 || Files.isRegularFile(modelDir.resolve("model.pt"))) {
@@ -724,9 +711,16 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
         throw new ModelNotFoundException("Failed to detect engine of the model: " + modelDir);
     }
 
+    private boolean isTorchServeModel() {
+        if (Files.isDirectory(modelDir.resolve("MAR-INF"))) {
+            logger.info("Found legacy torchserve model, use Python engine.");
+            return true;
+        }
+        return false;
+    }
+
     private boolean isPythonModel(String prefix) {
-        return Files.isDirectory(modelDir.resolve("MAR-INF"))
-                || Files.isRegularFile(modelDir.resolve("model.py"))
+        return Files.isRegularFile(modelDir.resolve("model.py"))
                 || Files.isRegularFile(modelDir.resolve(prefix + ".py"))
                 || prop.getProperty("option.model_id") != null
                 || Files.isRegularFile(modelDir.resolve("config.json"));
@@ -756,6 +750,18 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
                     logger.warn(uid + ": Failed read serving.properties file", e);
                 }
             }
+            // load default settings from env
+            for (Map.Entry<String, String> entry : Utils.getenv().entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (key.startsWith("OPTION_") && value != null && !value.isEmpty()) {
+                    key = key.substring(7).toLowerCase(Locale.ROOT);
+                    if ("entrypoint".equals(key)) {
+                        key = "entryPoint";
+                    }
+                    prop.putIfAbsent("option." + key, value);
+                }
+            }
             configPerModelSettings();
             eventManager.onModelConfigured(this);
         }
@@ -781,19 +787,6 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
         }
         if (engineName == null) {
             engineName = inferEngine();
-        }
-
-        // load default settings from env
-        for (Map.Entry<String, String> entry : Utils.getenv().entrySet()) {
-            String key = entry.getKey();
-            String value = entry.getValue();
-            if (key.startsWith("OPTION_") && value != null && !value.isEmpty()) {
-                key = key.substring(7).toLowerCase(Locale.ROOT);
-                if ("entrypoint".equals(key)) {
-                    key = "entryPoint";
-                }
-                prop.putIfAbsent("option." + key, value);
-            }
         }
 
         StringBuilder sb = new StringBuilder();
@@ -1048,20 +1041,12 @@ public final class ModelInfo<I, O> extends WorkerPoolConfig<I, O> {
     }
 
     void downloadS3() throws ModelException, IOException {
-        String s3Url = prop.getProperty("option.s3url");
         String modelId = prop.getProperty("option.model_id");
         String draftModelId = prop.getProperty("option.speculative_draft_model");
         if (draftModelId != null && draftModelId.startsWith("s3://")) {
             Path draftDownloadDir = downloadS3ToDownloadDir(draftModelId);
             prop.setProperty(
                     "option.speculative_draft_model", draftDownloadDir.toAbsolutePath().toString());
-        }
-        if (s3Url != null) {
-            // s3url is deprecated, use model_id instead
-            if (modelId != null) {
-                throw new MalformedModelException("model_id and s3url could not both set!");
-            }
-            modelId = s3Url;
         }
         if (modelId == null) {
             return;

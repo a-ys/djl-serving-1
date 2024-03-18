@@ -651,7 +651,6 @@ vllm_model_list = {
         "option.trust_remote_code": True,
         "option.tensor_parallel_degree": 4,
         "option.max_rolling_batch_size": 4,
-        "option.revision": "834565c23f9b28b96ccbeabe614dd906b6db551a",
     },
     "llama2-70b": {
         "option.model_id": "s3://djl-llm/llama-2-70b-hf/",
@@ -669,6 +668,7 @@ vllm_model_list = {
         "option.model_id": "TheBloke/Llama-2-13B-fp16",
         "option.speculative_draft_model": "s3://djl-llm/tinyllama-1.1b-chat/",
         "option.record_acceptance_rate": True,
+        "option.gpu_memory_utilization": "0.8",
         "option.tensor_parallel_degree": "max",
         "option.output_formatter": "jsonlines"
     }
