@@ -607,7 +607,7 @@ trtllm_handler_list = {
     }
 }
 
-trtllm_neo_list {
+trtllm_neo_list = {
     "llama2-13b": {
         "option.model_id": "s3://djl-llm/llama-2-13b-hf/",
         "option.tensor_parallel_degree": 4,
@@ -619,6 +619,25 @@ trtllm_neo_list {
         "option.tensor_parallel_degree": 1,
         "option.rolling_batch": "trtllm",
         "option.output_formatter": "jsonlines",
+    }
+}
+
+transformers_neuronx_neo_list = {
+    "llama-2-13b": {
+        "option.model_id": "s3://djl-llm/llama-2-13b-hf/",
+        "option.tensor_parallel_degree": 12,
+        "option.n_positions": 1024,
+        "option.rolling_batch": "disable",
+        "option.batch_size": 4,
+        "option.dtype": "fp16",
+    },
+    "tinyllama": {
+        "option.model_id": "s3://djl-llm/tinyllama-1.1b-chat/",
+        "option.tensor_parallel_degree": 12,
+        "option.n_positions": 1024,
+        "option.rolling_batch": "disable",
+        "option.batch_size": 4,
+        "option.dtype": "fp16",
     }
 }
 
@@ -656,17 +675,27 @@ def write_model_artifacts(properties,
                 adapter_cache[adapter_id] = dir
 
 def create_neo_input_model(properties):
-    model_path = "models/uncompiled"
+    model_path = "models"
+    model_download_path = os.path.join(model_path, "uncompiled")
     if os.path.exists(model_path):
         shutil.rmtree(model_path)
-    os.makedirs(model_path, exist_ok=True)
-    with open(os.path.join(model_path, "serving.properties"), "w") as f:
+    os.makedirs(model_download_path, exist_ok=True)
+    with open(os.path.join(model_download_path, "serving.properties"), "w") as f:
         for key, value in properties.items():
             if key != "option.model_id":
                 f.write(f"{key}={value}\n")
+
+    # create Neo files/dirs
+    open(os.path.join(model_path, "errors.json"), "w").close()
+    os.makedirs(os.path.join(model_path, "cache"), exist_ok=True)
+    os.makedirs(os.path.join(model_path, "compiled"), exist_ok=True)
+
     # Download the model checkpoint from S3 to local path
     model_s3_uri = properties.get("option.model_id")
-    cmd = f"aws s3 sync {model_s3_uri} {model_path}"
+    if shutil.which("s5cmd"):
+        cmd = f"s5cmd sync {model_s3_uri} {model_download_path}"
+    else:
+        cmd = f"aws s3 sync {model_s3_uri} {model_download_path}"
     subprocess.check_call(cmd, shell=True, env=os.environ)
 
 
@@ -813,6 +842,16 @@ def build_trtllm_neo_model(model):
     # Download model to local in addition to generating serving.properties
     create_neo_input_model(options)
 
+def build_transformers_neuronx_neo_model(model):
+    if model not in transformers_neuronx_neo_list:
+        raise ValueError(
+            f"{model} is not one of the supporting handler {list(transformers_neuronx_neo_list.keys())}"
+        )
+    options = transformers_neuronx_neo_list[model]
+    options["engine"] = "Python"
+    options["option.entryPoint"] = "djl_python.transformers_neuronx"
+    create_neo_input_model(options)
+
 supported_handler = {
     'huggingface': build_hf_handler_model,
     'transformers_neuronx': build_transformers_neuronx_handler_model,
@@ -824,6 +863,7 @@ supported_handler = {
     'vllm': build_vllm_model,
     'trtllm': build_trtllm_handler_model,
     'trtllm_neo_aot': build_trtllm_neo_model,
+    'transformers_neuronx_neo': build_transformers_neuronx_neo_model,
 }
 
 if __name__ == '__main__':
