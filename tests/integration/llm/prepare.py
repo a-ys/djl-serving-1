@@ -1,5 +1,6 @@
 import argparse
 import os
+import subprocess
 import shutil
 
 hf_handler_list = {
@@ -606,6 +607,76 @@ trtllm_handler_list = {
     }
 }
 
+trtllm_neo_list = {
+    "llama2-13b": {
+        "option.model_id": "s3://djl-llm/llama-2-13b-hf/",
+        "option.tensor_parallel_degree": 4,
+        "option.rolling_batch": "trtllm",
+        "option.output_formatter": "jsonlines",
+    },
+    "llama2-13b-smoothquant-tp4": {
+        "option.model_id": "s3://djl-llm/llama-2-13b-hf/",
+        "option.tensor_parallel_degree": 4,
+        "option.rolling_batch": "trtllm",
+        "option.output_formatter": "jsonlines",
+        "option.quantize": "smoothquant",
+    },
+    "falcon-7b": {
+        "option.model_id": "s3://djl-llm/falcon-7b-updated/",
+        "option.tensor_parallel_degree": 1,
+        "option.rolling_batch": "trtllm",
+        "option.output_formatter": "jsonlines",
+    },
+    "llama2-70b": {
+        "option.model_id": "s3://djl-llm/llama-2-70b-hf/",
+        "option.tensor_parallel_degree": 8,
+        "option.rolling_batch": "trtllm",
+        "option.output_formatter": "jsonlines",
+    },
+    "mistral-7b": {
+        "option.model_id": "s3://djl-llm/mistral-7b/",
+        "option.tensor_parallel_degree": 4,
+        "option.rolling_batch": "trtllm",
+        "option.output_formatter": "jsonlines"
+    },
+}
+
+transformers_neuronx_neo_list = {
+    "llama-2-13b": {
+        "option.model_id": "s3://djl-llm/llama-2-13b-hf/",
+        "option.tensor_parallel_degree": 8,
+        "option.n_positions": 1024,
+        "option.rolling_batch": "disable",
+        "option.batch_size": 4,
+        "option.dtype": "fp16",
+        "option.model_loading_timeout": 3600,
+    },
+    "mixtral-8x22b": {
+        "option.model_id": "s3://djl-llm/mixtral-8x22b/",
+        "option.tensor_parallel_degree": 8,
+        "option.n_positions": 512,
+        "option.rolling_batch": "disable",
+        "option.batch_size": 2,
+        "option.model_loading_timeout": 3600,
+    },
+    "codellama-34b-rb": {
+        "option.model_id": "s3://djl-llm/codellama-34b/",
+        "option.tensor_parallel_degree": 8,
+        "option.n_positions": 256,
+        "option.rolling_batch": "auto",
+        "option.max_rolling_batch_size": 4,
+        "option.model_loading_timeout": 3600,
+    },
+    "mistral-7b-rb": {
+        "option.model_id": "s3://djl-llm/mistral-7b/",
+        "option.tensor_parallel_degree": 4,
+        "option.n_positions": 512,
+        "option.rolling_batch": "auto",
+        "option.max_rolling_batch_size": 2,
+        "option.dtype": "fp16",
+        "option.model_loading_timeout": 3600,
+    },
+}
 
 def write_model_artifacts(properties,
                           requirements=None,
@@ -639,6 +710,36 @@ def write_model_artifacts(properties,
                                   local_dir_use_symlinks=False,
                                   local_dir=dir)
                 adapter_cache[adapter_id] = dir
+
+def create_neo_input_model(properties):
+    model_path = "models"
+    model_download_path = os.path.join(model_path, "uncompiled")
+    if os.path.exists(model_path):
+        shutil.rmtree(model_path)
+    os.makedirs(model_download_path, exist_ok=True)
+    with open(os.path.join(model_download_path, "serving.properties"), "w") as f:
+        for key, value in properties.items():
+            if key != "option.model_id":
+                f.write(f"{key}={value}\n")
+
+    # create Neo files/dirs
+    open(os.path.join(model_path, "errors.json"), "w").close()
+    os.makedirs(os.path.join(model_path, "cache"), exist_ok=True)
+    os.makedirs(os.path.join(model_path, "compiled"), exist_ok=True)
+
+    # Download the model checkpoint from S3 to local path
+    model_s3_uri = properties.get("option.model_id")
+    if os.path.isfile("/opt/djl/bin/s5cmd"):
+        if not model_s3_uri.endswith("*"):
+                if model_s3_uri.endswith("/"):
+                    model_s3_uri += '*'
+                else:
+                    model_s3_uri += '/*'
+
+        cmd = ["/opt/djl/bin/s5cmd", "sync", model_s3_uri, model_download_path]
+    else:
+        cmd = ["aws", "s3", "sync", model_s3_uri, model_download_path]
+    subprocess.check_call(cmd)
 
 
 def build_hf_handler_model(model):
@@ -773,6 +874,26 @@ def build_trtllm_handler_model(model):
     options["model_loading_timeout"] = "1800"
     write_model_artifacts(options)
 
+def build_trtllm_neo_model(model):
+    if model not in trtllm_neo_list:
+        raise ValueError(
+            f"{model} is not one of the supporting handler {list(trtllm_neo_list.keys())}"
+        )
+    options = trtllm_neo_list[model]
+    # 30 minute waiting for conversion timeout
+    options["model_loading_timeout"] = "1800"
+    # Download model to local in addition to generating serving.properties
+    create_neo_input_model(options)
+
+def build_transformers_neuronx_neo_model(model):
+    if model not in transformers_neuronx_neo_list:
+        raise ValueError(
+            f"{model} is not one of the supporting handler {list(transformers_neuronx_neo_list.keys())}"
+        )
+    options = transformers_neuronx_neo_list[model]
+    options["engine"] = "Python"
+    options["option.entryPoint"] = "djl_python.transformers_neuronx"
+    create_neo_input_model(options)
 
 supported_handler = {
     'huggingface': build_hf_handler_model,
@@ -784,6 +905,8 @@ supported_handler = {
     'lmi_dist_aiccl': build_lmi_dist_aiccl_model,
     'vllm': build_vllm_model,
     'trtllm': build_trtllm_handler_model,
+    'trtllm_neo': build_trtllm_neo_model,
+    'transformers_neuronx_neo': build_transformers_neuronx_neo_model,
 }
 
 if __name__ == '__main__':

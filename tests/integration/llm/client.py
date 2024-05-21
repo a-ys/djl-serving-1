@@ -163,6 +163,29 @@ transformers_neuronx_aot_model_spec = {
     },
 }
 
+transformers_neuronx_neo_model_spec = {
+    "llama-2-13b": {
+        "workers": 1,
+        "seq_length": [1024],
+        "batch_size": [4]
+    },
+    "mixtral-8x22b": {
+        "workers": 1,
+        "seq_length": [512],
+        "batch_size": [2]
+    },
+    "codellama-34b-rb": {
+        "workers": 1,
+        "seq_length": [256],
+        "batch_size": [4]
+    },
+    "mistral-7b-rb": {
+        "workers": 1,
+        "seq_length": [512],
+        "batch_size": [2]
+    }
+}
+
 lmi_dist_model_spec = {
     "gpt-neox-20b": {
         "max_memory_per_gpu": [25.0],
@@ -458,6 +481,34 @@ trtllm_model_spec = {
         "seq_length": [256],
         "tokenizer": "google/flan-t5-xxl"
     }
+}
+
+
+trtllm_neo_model_spec = {
+    "llama2-13b": {
+        "max_memory_per_gpu": [22.0],
+        "batch_size": [1, 4],
+        "seq_length": [256],
+        "tokenizer": "TheBloke/Llama-2-13B-fp16"
+    },
+    "falcon-7b": {
+        "max_memory_per_gpu": [22.0],
+        "batch_size": [1, 4],
+        "seq_length": [256],
+        "tokenizer": "tiiuae/falcon-7b"
+    },
+    "llama2-70b": {
+        "max_memory_per_gpu": [40.0],
+        "batch_size": [1, 8],
+        "seq_length": [256],
+        "tokenizer": "TheBloke/Llama-2-13B-fp16"
+    },
+    "mistral-7b": {
+        "max_memory_per_gpu": [22.0],
+        "batch_size": [1, 4],
+        "seq_length": [256],
+        "tokenizer": "mistralai/Mistral-7B-v0.1"
+    },
 }
 
 no_code_rolling_batch_spec = {
@@ -1157,6 +1208,9 @@ def run(raw_args):
     elif args.handler == "transformers_neuronx-aot":
         test_transformers_neuronx_handler(args.model,
                                           transformers_neuronx_aot_model_spec)
+    elif args.handler == "transformers_neuronx-neo":
+        test_transformers_neuronx_handler(args.model,
+                                          transformers_neuronx_neo_model_spec)
     elif args.handler == "lmi_dist":
         test_handler_rolling_batch(args.model, lmi_dist_model_spec)
     elif args.handler == "lmi_dist_adapters":
@@ -1177,6 +1231,8 @@ def run(raw_args):
         test_handler_rolling_batch(args.model, trtllm_model_spec)
     elif args.handler == "trtllm-python":
         test_handler(args.model, trtllm_model_spec)
+    elif args.handler == "trtllm-neo":
+        test_handler_rolling_batch(args.model, trtllm_neo_model_spec)
     elif args.handler == "no_code":
         test_handler_rolling_batch(args.model, no_code_rolling_batch_spec)
 
